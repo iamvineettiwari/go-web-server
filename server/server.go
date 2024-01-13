@@ -2,10 +2,13 @@ package server
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"log"
 	"net"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/iamvineettiwari/go-web-server/http"
 	"github.com/iamvineettiwari/go-web-server/http/status"
@@ -15,13 +18,49 @@ type HttpServer struct {
 	ListenAddr string
 	Listener   net.Listener
 	serverLock chan struct{}
+	staticPath string
+	handlers   map[string]map[string]func(req *http.Request, res *http.Response)
 }
 
 func NewHttpServer(address string) *HttpServer {
 	return &HttpServer{
 		ListenAddr: address,
 		serverLock: make(chan struct{}),
+		handlers:   make(map[string]map[string]func(req *http.Request, res *http.Response)),
+		staticPath: filepath.Join(BASE_PATH, "public"),
 	}
+}
+
+func (hs *HttpServer) SetStaticPath(path string) {
+	hs.staticPath = path
+}
+
+func (hs *HttpServer) GetStaticPath() string {
+	return hs.staticPath
+}
+
+func (hs *HttpServer) registerHandler(method string, path string, handler func(req *http.Request, res *http.Response)) {
+	if _, present := hs.handlers[method]; !present {
+		hs.handlers[method] = make(map[string]func(req *http.Request, res *http.Response))
+	}
+
+	hs.handlers[method][path] = handler
+}
+
+func (hs *HttpServer) Get(path string, handler func(req *http.Request, res *http.Response)) {
+	hs.registerHandler(http.GET, path, handler)
+}
+
+func (hs *HttpServer) Post(path string, handler func(req *http.Request, res *http.Response)) {
+	hs.registerHandler(http.POST, path, handler)
+}
+
+func (hs *HttpServer) Put(path string, handler func(req *http.Request, res *http.Response)) {
+	hs.registerHandler(http.PUT, path, handler)
+}
+
+func (hs *HttpServer) Delete(path string, handler func(req *http.Request, res *http.Response)) {
+	hs.registerHandler(http.DELETE, path, handler)
 }
 
 func (hs *HttpServer) Start() error {
@@ -70,46 +109,36 @@ func (hs *HttpServer) serve(conn net.Conn) {
 
 	data := buffer[:n]
 	request := http.Decode(data)
+	response := http.GetResponseWriter(conn)
 
-	response, respStatus, err := hs.processRequest(request)
-	var respData []byte
-
-	if err != nil {
-		respData = http.Encode(response, respStatus)
-	} else {
-		respData = http.Encode(response, respStatus)
+	if request.Method == http.GET && strings.Contains(request.Path, ".") {
+		hs.processStaticRequest(request, response)
+		return
 	}
 
-	conn.Write(respData)
+	handler, err := hs.resolveHandler(request.Method, request.Path)
+
+	if err != nil {
+		hs.processStaticRequest(request, response)
+		return
+	}
+
+	parseErr := request.ParseRequest()
+
+	if parseErr != nil {
+		response.Send([]byte(parseErr.Error()), status.HTTP_400_BAD_REQUEST)
+		return
+	}
+
+	handler(request, response)
 }
 
-func (hs *HttpServer) processRequest(request *http.Request) ([]byte, status.HttpStatus, error) {
-	curDirectory, err := os.Getwd()
+func (hs *HttpServer) processStaticRequest(request *http.Request, response *http.Response) {
+	file, err := hs.processFilePath(request.Path)
 
 	if err != nil {
-		return []byte("Something went wrong"), status.HTTP_500_SERVER_ERROR, err
-	}
-
-	path := curDirectory + "/www" + request.Path
-
-	if request.Path == "/" {
-		path += "index.html"
-	}
-
-	info, err := os.Stat(path)
-
-	if err != nil {
-		return []byte("File not found"), status.HTTP_404_NOT_FOUND, err
-	}
-
-	if info.Size() == 0 {
-		return []byte("Invalid request"), status.HTTP_400_BAD_REQUEST, err
-	}
-
-	file, err := os.Open(path)
-
-	if err != nil {
-		return []byte("File not found"), status.HTTP_404_NOT_FOUND, err
+		response.Send([]byte("Page not found"), status.HTTP_404_NOT_FOUND)
+		return
 	}
 
 	dataBuff := bytes.Buffer{}
@@ -117,8 +146,66 @@ func (hs *HttpServer) processRequest(request *http.Request) ([]byte, status.Http
 	n, err := io.Copy(&dataBuff, file)
 
 	if err != nil {
-		return []byte("Something went wrong"), status.HTTP_500_SERVER_ERROR, err
+		response.Send([]byte("Something went wrong"), status.HTTP_500_SERVER_ERROR)
+		return
 	}
 
-	return dataBuff.Bytes()[:n], status.HTTP_200_OK, nil
+	response.Send(dataBuff.Bytes()[:n], status.HTTP_200_OK)
+	return
+}
+
+func (hs *HttpServer) processFilePath(requestPath string) (*os.File, error) {
+	curWd, wdErr := os.Getwd()
+
+	if wdErr != nil {
+		return nil, wdErr
+	}
+
+	path := filepath.Join(curWd, filepath.Join(hs.staticPath, requestPath))
+
+	if strings.HasSuffix(requestPath, "/") {
+		path = filepath.Join(path, "index.html")
+	}
+
+	info, err := os.Stat(path)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if info.IsDir() {
+		path = filepath.Join(path, "index.html")
+	}
+
+	info, err = os.Stat(path)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if info.Size() == 0 || info.IsDir() {
+		return nil, err
+	}
+
+	file, err := os.Open(path)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return file, nil
+}
+
+func (hs *HttpServer) resolveHandler(method string, path string) (func(req *http.Request, res *http.Response), error) {
+	if _, methodPresent := hs.handlers[method]; !methodPresent {
+		return nil, errors.New("Not found")
+	}
+
+	handler, handlerPresent := hs.handlers[method][path]
+
+	if !handlerPresent {
+		return nil, errors.New("Not found")
+	}
+
+	return handler, nil
 }
