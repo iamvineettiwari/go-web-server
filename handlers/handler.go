@@ -9,25 +9,41 @@ import (
 	"github.com/iamvineettiwari/go-web-server/http/status"
 )
 
-func GetUser(req *http.Request, res *http.Response) {
+func GetUserById(req *http.Request, res *http.Response) {
 	db := data.GetDB()
 
-	var users any
+	id, present := req.Params["id"]
 
-	id, isIdPresent := req.Query["id"]
-
-	if isIdPresent {
-		id, err := strconv.Atoi(id.(string))
-
-		if err != nil {
-			res.Send([]byte(err.Error()), status.HTTP_500_SERVER_ERROR)
-			return
-		}
-
-		users = db.GetById(id)
-	} else {
-		users = db.Get()
+	if !present {
+		res.SetStatus(status.HTTP_400_BAD_REQUEST)
+		res.Write([]byte("User Not Found"))
+		return
 	}
+
+	userId, err := strconv.Atoi(id)
+
+	if err != nil {
+		res.Send([]byte(err.Error()), status.HTTP_500_SERVER_ERROR)
+		return
+	}
+
+	user := db.GetById(userId)
+
+	data, err := json.Marshal(user)
+
+	if err != nil {
+		res.Send([]byte(err.Error()), status.HTTP_500_SERVER_ERROR)
+		return
+	}
+
+	res.AddHeader("Content-Type", http.APPLICATION_JSON)
+	res.Send(data, status.HTTP_200_OK)
+}
+
+func GetUsers(req *http.Request, res *http.Response) {
+	db := data.GetDB()
+
+	users := db.Get()
 
 	data, err := json.Marshal(users)
 
@@ -69,7 +85,22 @@ func CreateUser(req *http.Request, res *http.Response) {
 func UpdateUser(req *http.Request, res *http.Response) {
 	var user data.User
 
-	err := json.Unmarshal(req.Body, &user)
+	id, present := req.Params["id"]
+
+	if !present {
+		res.SetStatus(status.HTTP_400_BAD_REQUEST)
+		res.Write([]byte("User Not Found"))
+		return
+	}
+
+	userId, err := strconv.Atoi(id)
+
+	if err != nil {
+		res.Send([]byte(err.Error()), status.HTTP_500_SERVER_ERROR)
+		return
+	}
+
+	err = json.Unmarshal(req.Body, &user)
 
 	if err != nil {
 		res.SetStatus(status.HTTP_400_BAD_REQUEST)
@@ -79,12 +110,13 @@ func UpdateUser(req *http.Request, res *http.Response) {
 
 	db := data.GetDB()
 
-	if db.GetById(user.Id) == nil {
+	if db.GetById(userId) == nil {
 		res.SetStatus(status.HTTP_400_BAD_REQUEST)
 		res.Write([]byte("User Not Found"))
 		return
 	}
 
+	user.Id = userId
 	userUpdated := db.Update(&user)
 	respData, err := json.Marshal(userUpdated)
 
@@ -99,7 +131,7 @@ func UpdateUser(req *http.Request, res *http.Response) {
 }
 
 func DeleteUser(req *http.Request, res *http.Response) {
-	id, isIdPresent := req.Query["id"]
+	id, isIdPresent := req.Params["id"]
 
 	if !isIdPresent {
 		res.SetStatus(status.HTTP_400_BAD_REQUEST)
@@ -107,7 +139,7 @@ func DeleteUser(req *http.Request, res *http.Response) {
 		return
 	}
 
-	userId, err := strconv.Atoi(id.(string))
+	userId, err := strconv.Atoi(id)
 
 	if err != nil {
 		res.Send([]byte(err.Error()), status.HTTP_500_SERVER_ERROR)

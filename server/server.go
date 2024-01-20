@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"errors"
 	"io"
 	"log"
 	"net"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/iamvineettiwari/go-web-server/http"
 	"github.com/iamvineettiwari/go-web-server/http/status"
+	"github.com/iamvineettiwari/go-web-server/router"
 )
 
 type HttpServer struct {
@@ -19,15 +19,15 @@ type HttpServer struct {
 	Listener   net.Listener
 	serverLock chan struct{}
 	staticPath string
-	handlers   map[string]map[string]func(req *http.Request, res *http.Response)
+	router     *router.Router
 }
 
 func NewHttpServer(address string) *HttpServer {
 	return &HttpServer{
 		ListenAddr: address,
 		serverLock: make(chan struct{}),
-		handlers:   make(map[string]map[string]func(req *http.Request, res *http.Response)),
 		staticPath: filepath.Join(BASE_PATH, "public"),
+		router:     router.NewRouter(),
 	}
 }
 
@@ -39,28 +39,8 @@ func (hs *HttpServer) GetStaticPath() string {
 	return hs.staticPath
 }
 
-func (hs *HttpServer) registerHandler(method string, path string, handler func(req *http.Request, res *http.Response)) {
-	if _, present := hs.handlers[method]; !present {
-		hs.handlers[method] = make(map[string]func(req *http.Request, res *http.Response))
-	}
-
-	hs.handlers[method][path] = handler
-}
-
-func (hs *HttpServer) Get(path string, handler func(req *http.Request, res *http.Response)) {
-	hs.registerHandler(http.GET, path, handler)
-}
-
-func (hs *HttpServer) Post(path string, handler func(req *http.Request, res *http.Response)) {
-	hs.registerHandler(http.POST, path, handler)
-}
-
-func (hs *HttpServer) Put(path string, handler func(req *http.Request, res *http.Response)) {
-	hs.registerHandler(http.PUT, path, handler)
-}
-
-func (hs *HttpServer) Delete(path string, handler func(req *http.Request, res *http.Response)) {
-	hs.registerHandler(http.DELETE, path, handler)
+func (hs *HttpServer) GetRouter() *router.Router {
+	return hs.router
 }
 
 func (hs *HttpServer) Start() error {
@@ -116,14 +96,14 @@ func (hs *HttpServer) serve(conn net.Conn) {
 		return
 	}
 
-	handler, err := hs.resolveHandler(request.Method, request.Path)
+	handler, params, err := hs.router.Resolve(request.Method, request.Path)
 
 	if err != nil {
 		hs.processStaticRequest(request, response)
 		return
 	}
 
-	parseErr := request.ParseRequest()
+	parseErr := request.ParseRequest(params)
 
 	if parseErr != nil {
 		response.Send([]byte(parseErr.Error()), status.HTTP_400_BAD_REQUEST)
@@ -194,18 +174,4 @@ func (hs *HttpServer) processFilePath(requestPath string) (*os.File, error) {
 	}
 
 	return file, nil
-}
-
-func (hs *HttpServer) resolveHandler(method string, path string) (func(req *http.Request, res *http.Response), error) {
-	if _, methodPresent := hs.handlers[method]; !methodPresent {
-		return nil, errors.New("Not found")
-	}
-
-	handler, handlerPresent := hs.handlers[method][path]
-
-	if !handlerPresent {
-		return nil, errors.New("Not found")
-	}
-
-	return handler, nil
 }

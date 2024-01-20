@@ -22,3 +22,6 @@ const (
 	PUT    string = "PUT"
 	DELETE string = "DELETE"
 )
+
+type HandlerFunc func(req *Request, res *Response)
+type Params map[string]string

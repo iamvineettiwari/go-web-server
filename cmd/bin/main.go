@@ -13,10 +13,13 @@ func main() {
 
 	// httpServer.SetStaticPath(filepath.Join(server.BASE_PATH, "cmd/bin/www"))
 
-	httpServer.Get("/users", handlers.GetUser)
-	httpServer.Post("/users", handlers.CreateUser)
-	httpServer.Put("/users", handlers.UpdateUser)
-	httpServer.Delete("/users", handlers.DeleteUser)
+	router := httpServer.GetRouter()
+
+	router.Post("/users", handlers.CreateUser)
+	router.Get("/users", handlers.GetUsers)
+	router.Get("/users/:id", handlers.GetUserById)
+	router.Put("/users/:id", handlers.UpdateUser)
+	router.Delete("/users/:id", handlers.DeleteUser)
 
 	fmt.Println("Server starting at : http://localhost:8001")
 
