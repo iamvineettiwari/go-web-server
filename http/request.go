@@ -12,14 +12,16 @@ type Request struct {
 	Headers map[string]string
 	Query   map[string]any
 	Body    []byte
+	Params  Params
 }
 
-func (r *Request) ParseRequest() error {
+func (r *Request) ParseRequest(params Params) error {
 	if r.data == nil || len(r.data) == 0 {
 		return errors.New("Empty body")
 	}
 
 	r.Body = r.data
+	r.Params = params
 
 	if _, presentContentType := r.Headers["Content-Type"]; !presentContentType {
 		if r.Method == GET {
